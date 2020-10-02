@@ -46,8 +46,7 @@
 #'
 #' @examples
 #' # Create a basic SEF file for air temperature in Bern
-#' # (assuming the observation times are in local solar time)
-#' # The file will be written in the working directory
+#' # (assuming the observation times are in mean local solar time)
 #' meta_bern <- Meta$ta[which(Meta$ta$id == "Bern"), ]
 #' write_sef(Bern$ta[, 2:7], outpath = tempdir(), variable = "ta", 
 #'           cod = meta_bern$id, nam = "Bern", lat = meta_bern$lat, 
@@ -63,32 +62,8 @@ write_sef <- function(Data, outpath, variable, cod, nam = "", lat = "",
                       stat, metaHead = "", meta = "", period = "",
                       time_offset = 0, note = "", keep_na = FALSE, outfile = NA) {
   
-  ## Build filename
-  if (substr(outpath, nchar(outpath), nchar(outpath)) != "/") {
-    outpath <- paste0(outpath, "/")
-  }
-  if (is.na(outfile)) {
-    datemin <- paste(formatC(unlist(Data[1, 1:3]), width=2, flag=0),
-                     collapse = "")
-    datemax <- paste(formatC(unlist(Data[dim(Data)[1], 1:3]), width=2, flag=0),
-                     collapse = "")
-    if (substr(datemin,5,6) == "NA") datemin <- substr(datemin, 1, 4)
-    if (substr(datemax,5,6) == "NA") datemax <- substr(datemax, 1, 4)
-    if (substr(datemin,3,4) == "NA") datemin <- substr(datemin, 1, 2)
-    if (substr(datemax,3,4) == "NA") datemax <- substr(datemax, 1, 2)
-    dates <- paste(datemin, datemax, sep = "-")
-    filename <- paste(sou, cod, dates, variable, sep = "_")
-    if (sou %in% c(NA,"")) filename <- sub("_", "", filename)
-    if (note != "") {
-      note <- paste0("_", gsub(" ", "_", note))
-    }
-    filename <- paste0(outpath, filename, note, ".tsv")
-  } else {
-    filename <- paste0(outpath, outfile)
-    if (substr(filename, nchar(filename)-3, nchar(filename)) != ".tsv") {
-      filename <- paste0(filename, ".tsv")
-    }
-  }
+  ## Get rid of factors
+  for (i in 1:ncol(Data)) Data[,i] <- as.character(Data[,i])
   
   ## Build header
   header <- array(dim = c(12, 2), data = "")
@@ -123,18 +98,45 @@ write_sef <- function(Data, outpath, variable, cod, nam = "", lat = "",
   }
   
   ## Build data frame with SEF structure
-  DataNew <- data.frame(Year = as.integer(Data[, 1]),
-                        Month = as.integer(Data[, 2]),
-                        Day = as.integer(Data[, 3]),
+  DataNew <- data.frame(Year = Data[, 1],
+                        Month = Data[, 2],
+                        Day = Data[, 3],
                         Hour = Data[, 4],
                         Minute = Data[, 5],
                         Period = as.character(period),
-                        Value = as.character(Data[, 6]),
+                        Value = Data[, 6],
                         Meta = as.character(meta),
                         stringsAsFactors = FALSE)
   
   ## Remove lines with missing data
   if (!keep_na) DataNew <- DataNew[which(!is.na(DataNew$Value)), ]
+  
+  ## Build filename
+  if (substr(outpath, nchar(outpath), nchar(outpath)) != "/") {
+    outpath <- paste0(outpath, "/")
+  }
+  if (is.na(outfile)) {
+    j <- 3
+    if (is.na(as.integer(DataNew[1,3]))) j <- 2
+    if (is.na(as.integer(DataNew[1,2]))) j <- 1
+    datemin <- paste(formatC(unlist(as.integer(DataNew[1, 1:j])), width=2, flag=0),
+                     collapse = "")
+    datemax <- paste(formatC(unlist(as.integer(DataNew[dim(DataNew)[1], 1:j])), width=2, flag=0),
+                     collapse = "")
+    dates <- paste(datemin, datemax, sep = "-")
+    filename <- paste(sou, cod, dates, variable, sep = "_")
+    if (sou %in% c(NA,"")) filename <- sub("_", "", filename)
+    if (note != "") {
+      note <- paste0("_", gsub(" ", "_", note))
+    }
+    filename <- gsub(" ", "", filename)
+    filename <- paste0(outpath, filename, note, ".tsv")
+  } else {
+    filename <- paste0(outpath, outfile)
+    if (substr(filename, nchar(filename)-3, nchar(filename)) != ".tsv") {
+      filename <- paste0(filename, ".tsv")
+    }
+  }
   
   ## Write header to file
   write.table(header, file = filename, quote = FALSE, row.names = FALSE,
@@ -172,6 +174,8 @@ write_sef <- function(Data, outpath, variable, cod, nam = "", lat = "",
 #' It will be separated from the rest of the name by an underscore.
 #' Blanks will be also replaced by underscores.
 #' If not specified, input and output filenames will be identical.
+#' @param match Write the flags only if the values in the qc file are identical to
+#' those in the SEF file (default to TRUE).
 #' 
 #' @author Yuri Brugnara
 #' 
@@ -179,10 +183,16 @@ write_sef <- function(Data, outpath, variable, cod, nam = "", lat = "",
 #' The data will be converted to the standard units adopted by the qc.
 #' An exception is made for cloud cover (oktas will not be converted).
 #' 
+#' If \code{match} is set to FALSE, the flags will be added to the dates given
+#' in the qc files without checking that the entries in the Value column correspond. 
+#' This can be useful when there have been minor changes to the SEF file 
+#' (for instance, a different rounding) after the quality control was applied, 
+#' but can lead to overflagging when hour and minute values are missing.
+#' 
 #' @import utils
 #' @export
 
-write_flags <- function(infile, qcfile, outpath, note = "") {
+write_flags <- function(infile, qcfile, outpath, note = "", match = TRUE) {
   
   ## Read SEF file
   Data <- read_sef(infile, all = TRUE)
@@ -210,30 +220,46 @@ write_flags <- function(infile, qcfile, outpath, note = "") {
   }
   
   ## Read flags
-  flags <- read.table(qcfile, stringsAsFactors = FALSE, header = TRUE, sep = "\t")
+  flags <- suppressWarnings(read.table(qcfile, stringsAsFactors = FALSE, header = TRUE, 
+                                       sep = "\t"))
   if (flags[1,1] != Data[1,1]) {
     stop(paste("Variable mismatch:", flags[1,1], Data[1,1]))
   }
   if (dim(flags)[2] == 6) { # daily resolution
-    dates <- paste(flags[,2], flags[,3], flags[,4], flags[,5])
-    i <- which(paste(Data$Year, Data$Month, Data$Day, Data$Value) %in% dates)
+    if (match) {
+      dates <- paste(flags[,2], flags[,3], flags[,4], flags[,5])
+      i <- which(paste(Data$Year, Data$Month, Data$Day, Data$Value) %in% dates)
+    } else {
+      dates <- paste(flags[,2], flags[,3], flags[,4])
+      i <- which(paste(Data$Year, Data$Month, Data$Day) %in% dates)      
+    }
   } else if (dim(flags)[2] == 8) { # subdaily resolution
-    dates <- paste(flags[,2], flags[,3], flags[,4], flags[,5], flags[,6], flags[,7])
-    i <- which(paste(Data$Year, Data$Month, Data$Day, Data$Hour, Data$Minute, Data$Value) 
-               %in% dates)   
+    if (match) {
+      dates <- paste(flags[,2], flags[,3], flags[,4], flags[,5], flags[,6], flags[,7])
+      i <- which(paste(Data$Year, Data$Month, Data$Day, Data$Hour, Data$Minute, Data$Value) 
+                 %in% dates)  
+    } else {
+      dates <- paste(flags[,2], flags[,3], flags[,4], flags[,5], flags[,6])
+      i <- which(paste(Data$Year, Data$Month, Data$Day, Data$Hour, Data$Minute) 
+                 %in% dates)  
+    }
   } else {
-    stop("Wrong number of columns in flags file")
+    stop("Wrong number of columns in qc file")
   }
   
   if (length(i) > 0) {
     
     ## Stop if there are duplicates
-    if (length(i) > nrow(flags)) stop("Duplicates need one flag for each instance")
+#    if (length(i) > nrow(flags)) stop("Duplicates need one flag for each instance")
     
     ## Check if all flagged times are present in the SEF file
     if (length(i) < nrow(flags)) {
-      k <- which(!dates %in% paste(Data$Year, Data$Month, Data$Day, Data$Hour, Data$Minute,
-                                   Data$Value))
+      if (match) {
+        k <- which(!dates %in% paste(Data$Year, Data$Month, Data$Day, Data$Hour, Data$Minute,
+                                     Data$Value))
+      } else {
+        k <- which(!dates %in% paste(Data$Year, Data$Month, Data$Day, Data$Hour, Data$Minute))
+      }
       warning(paste("The SEF file does not contain all flagged observations.",
                     "Flags for the following observations could not be written:\n",
                     paste(dates[k], collapse="\n")))

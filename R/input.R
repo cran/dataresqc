@@ -23,7 +23,7 @@ read_sef <- function(file = file.choose(), all = FALSE) {
   
   ## Read the data
   Data <- read.table(file = file, skip = 12, header = TRUE, fill = TRUE,
-                     sep = "\t", stringsAsFactors = FALSE)
+                     sep = "\t", stringsAsFactors = FALSE, quote = "")
   
   ## Select columns
   if (!all) {
@@ -109,9 +109,9 @@ check_sef <- function(file = file.choose()) {
   
   meta <- read_meta(file)
   header <- read.table(file = file, nrows = 12, fill = TRUE,
-                       sep = "\t", stringsAsFactors = FALSE)
+                       sep = "\t", stringsAsFactors = FALSE, quote = "")
   x <- read.table(file = file, skip = 12, header = TRUE, fill = TRUE,
-                  sep = "\t", stringsAsFactors = FALSE)
+                  sep = "\t", stringsAsFactors = FALSE, quote = "")
   e <- 0
   w <- 0
   
@@ -119,25 +119,25 @@ check_sef <- function(file = file.choose()) {
   ## Check header
   if (!all(header[, 1] == c("SEF", "ID", "Name", "Lat", "Lon", "Alt",
                             "Source","Link", "Vbl", "Stat", "Units", "Meta"))) {
-    message("ERROR: One or more labels in the header were not recognized")
+    message("ERROR: One or more labels in the header were not recognized, 
+            or they are in the wrong order")
     e <- e + 1
   }
   
-  if (is.na(meta["id"])) {
+  if (is.na(meta["id"]) | meta["id"] == "") {
     message("ERROR: Missing Station ID")
     e <- e + 1
+  } else {
+    if (any(is.na(utf8ToInt(meta["id"])))) {
+      message("ERROR: Special characters are not allowed in the Station ID")
+      e <- e + 1
+    }
+    if (grepl(" ", trimws(meta["id"]))) {
+      message("ERROR: Blanks are not allowed in the Station ID")
+      e <- e + 1
+    }
   }
-  
-  if (any(is.na(utf8ToInt(meta["id"])))) {
-    message("ERROR: Special characters are not allowed in the Station ID")
-    e <- e + 1
-  }
-  
-  if (grepl(" ", trimws(meta["id"]))) {
-    message("ERROR: Blanks are not allowed in the Station ID")
-    e <- e + 1
-  }
-  
+    
   if (is.na(meta["name"])) {
     message("ERROR: Missing Station Name")
     e <- e + 1
@@ -184,11 +184,11 @@ check_sef <- function(file = file.choose()) {
     e <- e + 1
   }
   
-  if (!is.na(meta["meta"])) {
+  if (!is.na(meta["meta"]) & meta["meta"] != "") {
     n1 <- length(strsplit(meta["meta"], "|", fixed = TRUE)[[1]])
     n2 <- length(strsplit(meta["meta"], "=", fixed = TRUE)[[1]])
     if (n2 != (n1+1)) {
-      message("Warning: Uncorrect metadata format in Meta in the header")
+      message("Warning: Incorrect metadata format in Meta in the header")
       w <- w + 1
     }
   }
@@ -324,11 +324,12 @@ check_sef <- function(file = file.choose()) {
     w <- w + 1
   }
   
-  if (sum(!is.na(x$Meta)) > 0) {
-    n1 <- sapply(x$Meta, function(x) length(strsplit(x, "|", fixed = TRUE)[[1]]))
-    n2 <- sapply(x$Meta, function(x) length(strsplit(x, "=", fixed = TRUE)[[1]]))
+  if (length(which(x$Meta != "")) > 0) {
+    i <- which(x$Meta != "")
+    n1 <- sapply(x$Meta[i], function(x) length(strsplit(x, "|", fixed = TRUE)[[1]]))
+    n2 <- sapply(x$Meta[i], function(x) length(strsplit(x, "=", fixed = TRUE)[[1]]))
     if (any(n2 != (n1+1))) {
-      message("Warning: Uncorrect format detected in the Meta column")
+      message("Warning: Incorrect format detected in the Meta column")
       w <- w + 1
     }
   }
